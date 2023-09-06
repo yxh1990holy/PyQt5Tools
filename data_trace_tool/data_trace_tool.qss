@@ -1,0 +1,10 @@
+*{
+    font-size:22px;
+}
+QGroupBox{
+	font-size:26px;
+}
+QLabel#label_2{
+	font-size:18px;
+	color: red;
+}
