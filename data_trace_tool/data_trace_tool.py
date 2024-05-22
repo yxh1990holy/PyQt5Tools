@@ -1,44 +1,60 @@
 from PyQt5.QtGui import *
-from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QTableWidgetItem, QMessageBox, QComboBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QTableWidgetItem, QMessageBox, QComboBox, QTableWidget
 from PyQt5.QtCore import *
-from PyQt5 import QtWidgets
-import pandas as pd
-import numpy as np
+from PyQt5 import QtWidgets, QtGui
 import requests
 import pymysql
 from data_trace_tool_ui import Ui_MainWindow
+from qss import qss
 from threading import Thread
+from pymysql.err import OperationalError
+import openpyxl
 
+
+# 拖拽事件参考https://blog.csdn.net/hubing_hust/article/details/128072839
 
 class DataTraceTool(QMainWindow, Ui_MainWindow):
     signal = pyqtSignal(bool,str)
+    # updateTableWidgetSignal = pyqtSignal(str)
 
-    def __init__(self):
-        super().__init__()
-        # self = uic.loadUi("ui//data_trace_tool.ui")
-        # self = Ui_MainWindow()
+    def __init__(self, parent=None):
+        super(DataTraceTool, self).__init__(parent)
         self.setupUi(self)
-        # 充值窗口大小为屏幕的比例
-        # 获取显示器分辨率
-        self.screenRect = QtWidgets.QApplication.desktop().screenGeometry()
-        self.resize(3 * self.screenRect.width() / 5, 3 * self.screenRect.height() / 5)
+        self.initUI()
         self.user_id = None
         self.prevRow = -1
         self.action_key_num = 0
         self.page_key_num = 0
 
+        self.comboBox.currentIndexChanged.connect(self.handleSelectionChange)
+        self.uploadFileButton.clicked.connect(self.openfile)
+        # self.uploadFileButton.clicked.connect(self.creat_table_show)
+        self.tableWidget.itemClicked.connect(self.show_sql)
+        self.getUserIdButton.clicked.connect(self.get_user_id)
+        self.testConnectPushButton.clicked.connect(self.test_database_connect)
+        self.SQLPushButton.clicked.connect(self.get_result)
+        self.signal.connect(self.show_message)
+        # self.updateTableWidgetSignal.connect(self.creat_table_show)
+
+    def initUI(self):
+        # 充值窗口大小为屏幕的比例
+        # 获取显示器分辨率
+        self.screenRect = QtWidgets.QApplication.desktop().screenGeometry()
+        self.resize(3 * self.screenRect.width() / 5, 3 * self.screenRect.height() / 5)
+        self.getUserIdButton.setEnabled(False)
+        # 创建tableWidget，支持拖拽上传
+        self.tableWidget = MyTableWidget(self.groupBox_2)
+        self.tableWidget.setObjectName("tableWidget")
+        self.tableWidget.setColumnCount(0)
+        self.tableWidget.setRowCount(0)
+        self.verticalLayout.addWidget(self.tableWidget)
+        # 初始化部分值
         self.ipLineEdit.setText("bj-cdb-4kqb4cis.sql.tencentcdb.com")
         self.portLineEdit.setText("61292")
         self.dataBaseNameLineEdit.setText("data_trace")
         self.userNameLineEdit.setText("xd_dev_mysql")
         self.dataBasePasswordLineEdit.setText("Ycc3lgu1rjc4q8qe")
-        self.comboBox.currentIndexChanged.connect(self.handleSelectionChange)
-        self.uploadFileButton.clicked.connect(self.openfile)
-        self.uploadFileButton.clicked.connect(self.creat_table_show)
-        self.tableWidget.itemClicked.connect(self.show_sql)
-        self.getUserIdButton.clicked.connect(self.get_user_id)
-        self.testConnectPushButton.clicked.connect(self.test_database_connect)
-        self.SQLPushButton.clicked.connect(self.get_result)
+        self.tableWidget.updateTableSignal.connect(self.updateTableWidget)
 
     def show_message(self, flag=None, message=None):
         if flag:
@@ -58,54 +74,10 @@ class DataTraceTool(QMainWindow, Ui_MainWindow):
     def openfile(self):
         # 获取路径
         openfile_name = QFileDialog.getOpenFileName(None,'选择文件','','Excel files(*.xlsx , *.xls)')
-        #print(openfile_name)
-        global path_openfile_name
         # 获取路径
         path_openfile_name = openfile_name[0]
-
-    def creat_table_show(self):
-        # 读取表格，转换表格
         if len(path_openfile_name) > 0:
-            input_table = pd.read_excel(path_openfile_name,keep_default_na=False)
-            input_table_rows = input_table.shape[0]
-            input_table_colunms = input_table.shape[1]+1
-            input_table_header = input_table.columns.values.tolist()
-            # from openpyxl import load_workbook
-            # wb = load_workbook(path_openfile_name,read_only=True)
-            # ws = wb.sheet
-            input_table_header.insert(0,"测试结果")
-            # 获取上传表格中的page_key和action_key的列数
-            self.page_key_num = input_table_header.index("page_key")
-            self.action_key_num = input_table_header.index("action_key")
-            self.actionKeyLineEdit.setText(str(self.action_key_num))
-            self.pageKeyLineEdit.setText(str(self.page_key_num))
-            # 给tablewidget设置行列表头
-            self.tableWidget.setColumnCount(input_table_colunms)
-            self.tableWidget.setRowCount(input_table_rows)
-            self.tableWidget.setHorizontalHeaderLabels(input_table_header)
-            for column_num in range(input_table_colunms):
-                head_item = self.tableWidget.horizontalHeaderItem(column_num)
-                head_item.setFont(QFont("宋体",12,QFont.Bold))
-                head_item.setBackground(QBrush(QColor(192, 192, 192)))
-                # 设置字体颜色为白色
-                head_item.setForeground(QBrush(QColor(255,255,255)))
-            # 遍历表格每个元素，同时添加到tablewidget中
-            for i in range(input_table_rows):
-                input_table_rows_values = input_table.iloc[[i]]
-                input_table_rows_values_array = np.array(input_table_rows_values)
-                input_table_rows_values_list = input_table_rows_values_array.tolist()[0]
-                comBox = QComboBox()
-                comBox.addItems(['成功', '失败'])
-                comBox.setCurrentIndex(-1)
-                self.tableWidget.setCellWidget(i, 0, comBox)
-                for j in range(1,input_table_colunms):
-                    input_table_items_list = input_table_rows_values_list[j-1]
-                    # 将遍历的元素添加到tablewidget中并显示
-                    input_table_items = str(input_table_items_list)
-                    newItem = QTableWidgetItem(input_table_items)
-                    newItem.setFlags(Qt.ItemIsEnabled)
-                    newItem.setTextAlignment(Qt.AlignHCenter|Qt.AlignVCenter)
-                    self.tableWidget.setItem(i, j, newItem)
+            self.updateTableWidget(path_openfile_name)
 
     def show_sql(self, Item=None):
         self.action_key_num = self.actionKeyLineEdit.text()
@@ -178,7 +150,7 @@ class DataTraceTool(QMainWindow, Ui_MainWindow):
 
     def test_connect_thread(self, ip, username, password, database_name, port):
         try:
-            conn = pymysql.connect(host=ip, user=username, password=password, database=database_name, port=port)
+            conn = pymysql.connect(host=ip, user=username, password=password, database=database_name, port=port, connect_timeout=10)
             self.signal.emit(True, "数据库连接成功")
             conn.close()
             return
@@ -198,7 +170,7 @@ class DataTraceTool(QMainWindow, Ui_MainWindow):
 
     def get_result_thread(self, ip, username, password, database_name, port, sql):
         try:
-            conn = pymysql.connect(host=ip, user=username, password=password, database=database_name, port=port)
+            conn = pymysql.connect(host=ip, user=username, password=password, database=database_name, port=port, read_timeout=5)
             cursor = conn.cursor()
             cursor.execute(sql)
             data = cursor.fetchall()
@@ -222,18 +194,92 @@ class DataTraceTool(QMainWindow, Ui_MainWindow):
             return
         except AttributeError as ae:
             self.signal.emit(False,str(ae))
+        except OperationalError as oe:
+            # print(str(oe))
+            self.signal.emit(False, '查询超时')
         except Exception as e:
             self.signal.emit(False, str(e))
             return
+
+    def updateTableWidget(self, file_path):
+        # 读取表格，转换表格
+        if len(file_path) > 0:
+            wb =  openpyxl.load_workbook(file_path)
+            ws = wb.active
+            # 获取行数和列数
+            rows = ws.max_row
+            cols = ws.max_column
+            # tablewidget设置行数和列数
+            self.tableWidget.setRowCount(rows-1)    # 注意行数要减掉表头
+            self.tableWidget.setColumnCount(cols+1) # 注意列数要加上左侧增加的1列
+            # 获取表头数据
+            table_data = []
+            for row in ws.iter_rows(min_row=1, max_col=cols, max_row=rows, values_only=True):
+                table_data.append(list(row))
+            table_head_data = table_data[0]
+            table_head_data.insert(0, "测试结果")
+            # 获取上传表格中的page_key和action_key的列数
+            self.page_key_num = table_head_data.index("page_key")
+            self.action_key_num = table_head_data.index("action_key")
+            self.tableWidget.setHorizontalHeaderLabels(table_head_data)
+            for column_num in range(cols+1):
+                head_item = self.tableWidget.horizontalHeaderItem(column_num)
+                head_item.setFont(QFont("宋体", 12, QFont.Bold))
+                head_item.setBackground(QBrush(QColor(192, 192, 192)))
+                # 设置字体颜色为白色
+                head_item.setForeground(QBrush(QColor(255, 255, 255)))
+            # 遍历表格每个元素，同时添加到tablewidget中
+            print(rows)
+            for i in range(0, rows-1):
+                comBox = QComboBox()
+                comBox.addItems(['成功', '失败'])
+                comBox.setCurrentIndex(-1)
+                self.tableWidget.setCellWidget(i, 0, comBox)
+                for j in range(0, cols):
+                    # 将遍历的元素添加到tablewidget中并显示
+                    newItem = QTableWidgetItem('' if table_data[i+1][j] is None else str(table_data[i+1][j]))
+                    newItem.setFlags(Qt.ItemIsEnabled)
+                    newItem.setTextAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+                    self.tableWidget.setItem(i, j+1, newItem)
+
+
+class MyTableWidget(QTableWidget):
+    updateTableSignal = pyqtSignal(str)
+    def __init__(self, parent=None):
+        super(MyTableWidget, self).__init__(parent)
+        self.setAcceptDrops(True)
+    # 设置拖拽文件到该表格，触发该方法
+    def dragEnterEvent(self, event):
+        self.file_path = event.mimeData().text()
+        if '.xls' in self.file_path or ('.xlsx' in self.file_path):
+            event.accept()
+            # print(self.file_path.replace('file:///', '').replace("/", "\\"))
+            self.file_path = self.file_path.replace('file:///', '').replace("/", "\\")
+        else:
+            event.ignore()
+            # print('文件非excel文件')
+
+    def dragMoveEvent(self, event):
+        # print("dragMoveEvent")
+        event.accept()
+
+    # 注意此方法必须在dragMoveEvent接受后触发
+    # 用户释放鼠标按钮时，这个方法会被触发，用于处理拖拽事件
+    def dropEvent(self, event):
+        # print('释放后触发')
+        # self.updateTableWidget(self.file_path)
+        self.updateTableSignal.emit(self.file_path)
+
+
 
 if __name__ == "__main__":
     app = QApplication([])
     app.setWindowIcon(QIcon("tool.ico"))
     # 读取样式表
-    with open("data_trace_tool.qss", "r") as f:
-        app.setStyleSheet(f.read())
+    # with open("data_trace_tool.qss", "r") as f:
+    #     app.setStyleSheet(f.read())
+    app.setStyleSheet(qss)
     dataTraceTool = DataTraceTool()
-    dataTraceTool.signal.connect(dataTraceTool.show_message)
     dataTraceTool.show()
     # 设置程序运行样式为融合风格，不然表头背景色不会生效
     app.setStyle(QtWidgets.QStyleFactory.create('fusion'))
